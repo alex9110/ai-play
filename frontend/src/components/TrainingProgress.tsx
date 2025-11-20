@@ -29,6 +29,12 @@ interface TrainingMetrics {
   epoch: number;
   train_loss: number;
   val_loss: number;
+  train_loss_factors?: number;
+  train_loss_product?: number;
+  train_loss_total?: number;
+  val_loss_factors?: number;
+  val_loss_product?: number;
+  val_loss_total?: number;
   is_best?: boolean;
 }
 
@@ -154,20 +160,38 @@ export const TrainingProgress: React.FC<TrainingProgressProps> = ({
     labels: metrics.map((m) => `Epoch ${m.epoch}`),
     datasets: [
       {
-        label: 'Train Loss',
-        data: metrics.map((m) => m.train_loss),
+        label: 'Train Total Loss',
+        data: metrics.map((m) => m.train_loss_total ?? m.train_loss),
         borderColor: 'rgb(59, 130, 246)',
         backgroundColor: 'rgba(59, 130, 246, 0.1)',
         fill: true,
         tension: 0.4
       },
       {
-        label: 'Validation Loss',
-        data: metrics.map((m) => m.val_loss),
+        label: 'Val Total Loss',
+        data: metrics.map((m) => m.val_loss_total ?? m.val_loss),
         borderColor: 'rgb(16, 185, 129)',
         backgroundColor: 'rgba(16, 185, 129, 0.1)',
         fill: true,
         tension: 0.4
+      },
+      {
+        label: 'Train Factors Loss',
+        data: metrics.map((m) => m.train_loss_factors ?? m.train_loss),
+        borderColor: 'rgb(139, 92, 246)',
+        backgroundColor: 'rgba(139, 92, 246, 0.1)',
+        fill: false,
+        tension: 0.4,
+        borderDash: [5, 5]
+      },
+      {
+        label: 'Train Product Loss',
+        data: metrics.map((m) => m.train_loss_product ?? 0),
+        borderColor: 'rgb(236, 72, 153)',
+        backgroundColor: 'rgba(236, 72, 153, 0.1)',
+        fill: false,
+        tension: 0.4,
+        borderDash: [5, 5]
       }
     ]
   };
@@ -220,7 +244,7 @@ export const TrainingProgress: React.FC<TrainingProgressProps> = ({
 
   const latestMetrics = metrics[metrics.length - 1];
   const progressPercent = totalEpochs > 0 && currentEpoch > 0 
-    ? (currentEpoch / totalEpochs) * 100 
+    ? Math.min((currentEpoch / totalEpochs) * 100, 100)
     : isTraining ? 0 : 100;
 
   return (
@@ -244,7 +268,7 @@ export const TrainingProgress: React.FC<TrainingProgressProps> = ({
                 <div className="w-full bg-gray-200 rounded-full h-2.5">
                   <div 
                     className="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
-                    style={{ width: `${Math.max(progressPercent, 2)}%` }}
+                    style={{ width: `${Math.min(Math.max(progressPercent, 0), 100)}%` }}
                   />
                 </div>
                 <div className="grid grid-cols-3 gap-2 text-xs text-gray-600">
@@ -289,25 +313,55 @@ export const TrainingProgress: React.FC<TrainingProgressProps> = ({
       </div>
 
       {latestMetrics && (
-        <div className="grid grid-cols-2 gap-4 mb-4">
-          <div className="bg-blue-50 p-3 rounded">
-            <p className="text-xs text-gray-600">Train Loss</p>
-            <p className="text-lg font-semibold text-blue-700">
-              {latestMetrics.train_loss.toFixed(4)}
-            </p>
-            {latestMetrics.is_best && (
-              <p className="text-xs text-blue-600 mt-1">⭐ Best</p>
-            )}
+        <div className="space-y-3 mb-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="bg-blue-50 p-3 rounded">
+              <p className="text-xs text-gray-600">Train Total Loss</p>
+              <p className="text-lg font-semibold text-blue-700">
+                {(latestMetrics.train_loss_total ?? latestMetrics.train_loss).toFixed(4)}
+              </p>
+              {latestMetrics.is_best && (
+                <p className="text-xs text-blue-600 mt-1">⭐ Best</p>
+              )}
+            </div>
+            <div className="bg-green-50 p-3 rounded">
+              <p className="text-xs text-gray-600">Val Total Loss</p>
+              <p className="text-lg font-semibold text-green-700">
+                {(latestMetrics.val_loss_total ?? latestMetrics.val_loss).toFixed(4)}
+              </p>
+              {latestMetrics.is_best && (
+                <p className="text-xs text-green-600 mt-1">⭐ Best</p>
+              )}
+            </div>
           </div>
-          <div className="bg-green-50 p-3 rounded">
-            <p className="text-xs text-gray-600">Val Loss</p>
-            <p className="text-lg font-semibold text-green-700">
-              {latestMetrics.val_loss.toFixed(4)}
-            </p>
-            {latestMetrics.is_best && (
-              <p className="text-xs text-green-600 mt-1">⭐ Best</p>
-            )}
-          </div>
+          {(latestMetrics.train_loss_factors !== undefined || latestMetrics.train_loss_product !== undefined) && (
+            <div className="grid grid-cols-4 gap-2">
+              <div className="bg-purple-50 p-2 rounded">
+                <p className="text-xs text-gray-600">Train Factors</p>
+                <p className="text-sm font-semibold text-purple-700">
+                  {(latestMetrics.train_loss_factors ?? 0).toFixed(4)}
+                </p>
+              </div>
+              <div className="bg-pink-50 p-2 rounded">
+                <p className="text-xs text-gray-600">Train Product</p>
+                <p className="text-sm font-semibold text-pink-700">
+                  {(latestMetrics.train_loss_product ?? 0).toFixed(4)}
+                </p>
+              </div>
+              <div className="bg-purple-50 p-2 rounded">
+                <p className="text-xs text-gray-600">Val Factors</p>
+                <p className="text-sm font-semibold text-purple-700">
+                  {(latestMetrics.val_loss_factors ?? 0).toFixed(4)}
+                </p>
+              </div>
+              <div className="bg-pink-50 p-2 rounded">
+                <p className="text-xs text-gray-600">Val Product</p>
+                <p className="text-sm font-semibold text-pink-700">
+                  {(latestMetrics.val_loss_product ?? 0).toFixed(4)}
+                </p>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

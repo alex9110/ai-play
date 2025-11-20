@@ -116,14 +116,15 @@ class FactorizationDataset(Dataset):
     def __len__(self) -> int:
         return len(self.data)
     
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Get a single sample.
         
         Returns:
-            Tuple of (input_tensor, target_tensor)
+            Tuple of (input_tensor, target_tensor, n_tensor)
             - input_tensor: Encoded number (max_digits,)
             - target_tensor: Factors (2,)
+            - n_tensor: Original number as scalar tensor for product loss
         """
         sample = self.data[idx]
         n = sample['n']
@@ -136,7 +137,10 @@ class FactorizationDataset(Dataset):
         # Create target tensor
         target_tensor = torch.tensor([float(factor_a), float(factor_b)], dtype=torch.float32)
         
-        return input_tensor, target_tensor
+        # Create n tensor for product loss
+        n_tensor = torch.tensor(float(n), dtype=torch.float32)
+        
+        return input_tensor, target_tensor, n_tensor
 
 
 if __name__ == "__main__":

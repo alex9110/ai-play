@@ -31,6 +31,7 @@ function App() {
   const [epochs, setEpochs] = useState(50);
   const [batchSize, setBatchSize] = useState(64);
   const [learningRate, setLearningRate] = useState(0.001);
+  const [alpha, setAlpha] = useState(0.05);
   const [resume, setResume] = useState(false);
   const [numSamples, setNumSamples] = useState(10000);
   const [minVal, setMinVal] = useState(1);
@@ -136,7 +137,8 @@ function App() {
         epochs,
         batch_size: batchSize,
         learning_rate: learningRate,
-        resume
+        resume,
+        alpha
       });
       // Training started successfully, status will be updated via polling
       await loadModelInfo();
@@ -307,6 +309,19 @@ function App() {
                       min="0.0001"
                       max="1"
                     />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-600 mb-1">Alpha (Product Loss Weight)</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={alpha}
+                      onChange={(e) => setAlpha(parseFloat(e.target.value) || 0.05)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      min="0"
+                      max="1"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Weight for product consistency loss (default: 0.05)</p>
                   </div>
                   <div className="flex items-center gap-2">
                     <input

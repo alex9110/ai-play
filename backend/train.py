@@ -12,6 +12,7 @@ import argparse
 
 from model import FactorizationMLP, encode_number
 from dataset import load_dataset, generate_dataset, save_dataset
+from core.dataset import FactorizationDataset as CoreFactorizationDataset
 
 
 class FactorizationDataset(Dataset):
@@ -35,7 +36,10 @@ class FactorizationDataset(Dataset):
         # Encode target
         y = torch.tensor([float(factor_a), float(factor_b)], dtype=torch.float32)
         
-        return x, y
+        # Include n for product loss
+        n_tensor = torch.tensor(float(n), dtype=torch.float32)
+        
+        return x, y, n_tensor
 
 
 def train_model(
@@ -45,7 +49,8 @@ def train_model(
     num_epochs: int = 50,
     learning_rate: float = 0.001,
     checkpoint_dir: str = "models",
-    resume_from: Optional[str] = None
+    resume_from: Optional[str] = None,
+    alpha: float = 0.05
 ):
     """
     Train the factorization model.
@@ -74,7 +79,9 @@ def train_model(
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         start_epoch = checkpoint['epoch'] + 1
-        print(f"Resumed from epoch {start_epoch}")
+        if 'alpha' in checkpoint:
+            alpha = checkpoint['alpha']
+        print(f"Resumed from epoch {start_epoch}, alpha={alpha}")
     
     # Create checkpoint directory
     Path(checkpoint_dir).mkdir(parents=True, exist_ok=True)
@@ -84,33 +91,102 @@ def train_model(
     for epoch in range(start_epoch, num_epochs):
         # Training phase
         model.train()
-        train_loss = 0.0
-        for x, y in train_loader:
+        train_loss_factors = 0.0
+        train_loss_product = 0.0
+        train_loss_total = 0.0
+        for batch in train_loader:
+            # Handle both old format (x, y) and new format (x, y, n)
+            if len(batch) == 2:
+                x, y = batch
+                n_values = None
+            else:
+                x, y, n_values = batch
+                n_values = n_values.to(device)
+            
             x, y = x.to(device), y.to(device)
             
             optimizer.zero_grad()
             outputs = model(x)
-            loss = criterion(outputs, y)
-            loss.backward()
+            
+            # Factor loss
+            loss_factors = criterion(outputs, y)
+            
+            # Product loss
+            if n_values is not None:
+                product_pred = outputs[:, 0] * outputs[:, 1]
+                if n_values.dim() == 0:
+                    n_values = n_values.unsqueeze(0).expand(outputs.size(0))
+                elif n_values.size(0) != outputs.size(0):
+                    n_values = n_values[:outputs.size(0)]
+                loss_product = criterion(product_pred, n_values)
+            else:
+                # Fallback: compute n from targets
+                n_computed = y[:, 0] * y[:, 1]
+                product_pred = outputs[:, 0] * outputs[:, 1]
+                loss_product = criterion(product_pred, n_computed)
+            
+            # Composite loss
+            loss_total = loss_factors + alpha * loss_product
+            loss_total.backward()
             optimizer.step()
             
-            train_loss += loss.item()
+            train_loss_factors += loss_factors.item()
+            train_loss_product += loss_product.item()
+            train_loss_total += loss_total.item()
         
-        train_loss /= len(train_loader)
+        train_loss_factors /= len(train_loader)
+        train_loss_product /= len(train_loader)
+        train_loss_total /= len(train_loader)
         
         # Validation phase
         model.eval()
-        val_loss = 0.0
+        val_loss_factors = 0.0
+        val_loss_product = 0.0
+        val_loss_total = 0.0
         with torch.no_grad():
-            for x, y in val_loader:
+            for batch in val_loader:
+                # Handle both old format (x, y) and new format (x, y, n)
+                if len(batch) == 2:
+                    x, y = batch
+                    n_values = None
+                else:
+                    x, y, n_values = batch
+                    n_values = n_values.to(device)
+                
                 x, y = x.to(device), y.to(device)
                 outputs = model(x)
-                loss = criterion(outputs, y)
-                val_loss += loss.item()
+                
+                # Factor loss
+                loss_factors = criterion(outputs, y)
+                
+                # Product loss
+                if n_values is not None:
+                    product_pred = outputs[:, 0] * outputs[:, 1]
+                    if n_values.dim() == 0:
+                        n_values = n_values.unsqueeze(0).expand(outputs.size(0))
+                    elif n_values.size(0) != outputs.size(0):
+                        n_values = n_values[:outputs.size(0)]
+                    loss_product = criterion(product_pred, n_values)
+                else:
+                    # Fallback: compute n from targets
+                    n_computed = y[:, 0] * y[:, 1]
+                    product_pred = outputs[:, 0] * outputs[:, 1]
+                    loss_product = criterion(product_pred, n_computed)
+                
+                # Composite loss
+                loss_total = loss_factors + alpha * loss_product
+                
+                val_loss_factors += loss_factors.item()
+                val_loss_product += loss_product.item()
+                val_loss_total += loss_total.item()
         
-        val_loss /= len(val_loader)
+        val_loss_factors /= len(val_loader)
+        val_loss_product /= len(val_loader)
+        val_loss_total /= len(val_loader)
         
-        print(f"Epoch [{epoch+1}/{num_epochs}] - Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
+        print(f"Epoch [{epoch+1}/{num_epochs}] - "
+              f"Train: factors={train_loss_factors:.4f}, product={train_loss_product:.4f}, total={train_loss_total:.4f} | "
+              f"Val: factors={val_loss_factors:.4f}, product={val_loss_product:.4f}, total={val_loss_total:.4f}")
         
         # Save checkpoint every epoch
         checkpoint_path = Path(checkpoint_dir) / f"checkpoint_epoch_{epoch+1}.pt"
@@ -118,22 +194,24 @@ def train_model(
             'epoch': epoch,
             'model_state_dict': model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
-            'train_loss': train_loss,
-            'val_loss': val_loss,
+            'train_loss': train_loss_total,
+            'val_loss': val_loss_total,
+            'alpha': alpha
         }, checkpoint_path)
         
         # Save best model
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
+        if val_loss_total < best_val_loss:
+            best_val_loss = val_loss_total
             best_model_path = Path(checkpoint_dir) / "model.pt"
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
-                'train_loss': train_loss,
-                'val_loss': val_loss,
+                'train_loss': train_loss_total,
+                'val_loss': val_loss_total,
+                'alpha': alpha
             }, best_model_path)
-            print(f"Saved best model with val loss: {val_loss:.4f}")
+            print(f"Saved best model with val loss: {val_loss_total:.4f}")
     
     print("Training completed!")
     return best_val_loss
@@ -147,6 +225,7 @@ def main():
     parser.add_argument("--lr", type=float, default=0.001, help="Learning rate")
     parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume from")
     parser.add_argument("--checkpoint-dir", type=str, default="models", help="Checkpoint directory")
+    parser.add_argument("--alpha", type=float, default=0.05, help="Weight for product consistency loss (default: 0.05)")
     
     args = parser.parse_args()
     
@@ -182,7 +261,8 @@ def main():
         num_epochs=args.epochs,
         learning_rate=args.lr,
         checkpoint_dir=args.checkpoint_dir,
-        resume_from=args.resume
+        resume_from=args.resume,
+        alpha=args.alpha
     )
 
 

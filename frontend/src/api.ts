@@ -21,6 +21,7 @@ export interface TrainRequest {
   learning_rate?: number;
   resume?: boolean;
   dataset_path?: string;
+  alpha?: number;
 }
 
 export interface TrainResponse {

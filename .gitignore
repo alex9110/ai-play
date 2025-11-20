@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+backend/models/*.pt
+backend/logs/*.csv
+backend/logs/*.json
+backend/logs/*.png
+backend/data/*.json
+
+# Keep directory structure
+!backend/models/.gitkeep
+!backend/logs/.gitkeep
+!backend/data/.gitkeep
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Build outputs
+frontend/dist/
+frontend/build/
+
+# Docker
+.dockerignore

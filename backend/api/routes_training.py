@@ -37,7 +37,6 @@ class TrainRequest(BaseModel):
     learning_rate: float = Field(default=ModelConfig.DEFAULT_LEARNING_RATE, gt=0)
     resume: bool = Field(default=False, description="Resume from latest checkpoint")
     dataset_path: Optional[str] = None
-    alpha: float = Field(default=0.05, ge=0, le=1, description="Weight for product consistency loss")
 
 
 class TrainResponse(BaseModel):
@@ -51,7 +50,9 @@ def progress_callback(metrics: Dict):
     _training_state.update({
         'current_epoch': metrics['epoch'],
         'train_loss': metrics['train_loss'],
-        'val_loss': metrics['val_loss']
+        'val_loss': metrics['val_loss'],
+        'train_accuracy': metrics.get('train_accuracy', 0.0),
+        'val_accuracy': metrics.get('val_accuracy', 0.0)
     })
     
     # Send to SSE queue if available (thread-safe queue.Queue)
@@ -72,14 +73,13 @@ def training_worker(
     batch_size: int,
     learning_rate: float,
     resume: bool,
-    dataset_path: Optional[str],
-    alpha: float = 0.05
+    dataset_path: Optional[str]
 ):
     """Background worker for training (synchronous function)."""
     global _training_state
     
     try:
-        print(f"[Training] Starting training worker: {epochs} epochs, alpha={alpha}")
+        print(f"[Training] Starting training worker: {epochs} epochs")
         _training_state['is_training'] = True
         _training_state['total_epochs'] = epochs
         _training_state['current_epoch'] = 0
@@ -99,12 +99,18 @@ def training_worker(
         train_data = dataset[:split_idx]
         val_data = dataset[split_idx:]
         
+        # Get max_val from dataset for num_classes calculation
+        max_val = max(sample['n'] for sample in dataset) if dataset else DatasetConfig.DEFAULT_MAX_VAL
+        
         # Create data loaders
-        train_dataset = FactorizationDataset(train_data)
-        val_dataset = FactorizationDataset(val_data)
+        train_dataset = FactorizationDataset(train_data, max_val=max_val)
+        val_dataset = FactorizationDataset(val_data, max_val=max_val)
         
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
         val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+        
+        # Get num_classes
+        num_classes = DatasetConfig.get_num_classes(max_val)
         
         # Create or load model
         model = FactorizationMLP(
@@ -112,7 +118,8 @@ def training_worker(
             embedding_dim=ModelConfig.EMBEDDING_DIM,
             hidden_dims=ModelConfig.HIDDEN_DIMS,
             dropout=ModelConfig.DROPOUT,
-            max_digits=ModelConfig.MAX_DIGITS
+            max_digits=ModelConfig.MAX_DIGITS,
+            num_classes=num_classes
         )
         
         # Resume from checkpoint if requested
@@ -132,8 +139,7 @@ def training_worker(
             learning_rate=learning_rate,
             checkpoint_dir=TrainingConfig.CHECKPOINT_DIR,
             log_dir=TrainingConfig.LOG_DIR,
-            progress_callback=progress_callback,
-            alpha=alpha
+            progress_callback=progress_callback
         )
         
         # Train
@@ -190,8 +196,7 @@ async def start_training(request: TrainRequest, background_tasks: BackgroundTask
         request.batch_size,
         request.learning_rate,
         request.resume,
-        request.dataset_path,
-        request.alpha
+        request.dataset_path
     )
     
     return TrainResponse(
@@ -239,6 +244,8 @@ async def get_training_progress():
                         'epoch': metrics['epoch'],
                         'train_loss': metrics['train_loss'],
                         'val_loss': metrics['val_loss'],
+                        'train_accuracy': metrics.get('train_accuracy', 0.0),
+                        'val_accuracy': metrics.get('val_accuracy', 0.0),
                         'is_best': metrics.get('is_best', False),
                         'total_epochs': _training_state['total_epochs']
                     }
@@ -285,6 +292,8 @@ async def get_training_status():
         'total_epochs': _training_state['total_epochs'],
         'train_loss': _training_state.get('train_loss', 0.0),
         'val_loss': _training_state.get('val_loss', 0.0),
+        'train_accuracy': _training_state.get('train_accuracy', 0.0),
+        'val_accuracy': _training_state.get('val_accuracy', 0.0),
         'error': _training_state.get('error', None)
     }
 

@@ -102,16 +102,25 @@ def load_dataset(filepath: str = None) -> List[Dict]:
 class FactorizationDataset(Dataset):
     """
     PyTorch Dataset for factorization data.
+    Classification version: predicts factorA as a class index.
     """
     
-    def __init__(self, data: List[Dict], max_digits: int = ModelConfig.MAX_DIGITS):
+    def __init__(
+        self, 
+        data: List[Dict], 
+        max_digits: int = ModelConfig.MAX_DIGITS,
+        max_val: int = DatasetConfig.DEFAULT_MAX_VAL
+    ):
         """
         Args:
             data: List of dicts with 'n', 'factor_a', 'factor_b' keys
             max_digits: Maximum number of digits to encode
+            max_val: Maximum value in dataset (used to determine num_classes)
         """
         self.data = data
         self.max_digits = max_digits
+        self.max_factor = DatasetConfig.get_max_factor(max_val)
+        self.num_classes = DatasetConfig.get_num_classes(max_val)
     
     def __len__(self) -> int:
         return len(self.data)
@@ -121,26 +130,32 @@ class FactorizationDataset(Dataset):
         Get a single sample.
         
         Returns:
-            Tuple of (input_tensor, target_tensor, n_tensor)
+            Tuple of (input_tensor, class_index, n_tensor)
             - input_tensor: Encoded number (max_digits,)
-            - target_tensor: Factors (2,)
-            - n_tensor: Original number as scalar tensor for product loss
+            - class_index: Class index for factorA (class_index = true_A - 1)
+            - n_tensor: Original number as scalar tensor
         """
         sample = self.data[idx]
         n = sample['n']
         factor_a = sample['factor_a']
         factor_b = sample['factor_b']
         
+        # Ensure factor_a is the smaller factor
+        true_a = min(factor_a, factor_b)
+        true_b = max(factor_a, factor_b)
+        
         # Encode input number
         input_tensor = encode_number(n, self.max_digits)
         
-        # Create target tensor
-        target_tensor = torch.tensor([float(factor_a), float(factor_b)], dtype=torch.float32)
+        # Create class index: class_index = true_A - 1
+        # Clamp to valid range [0, num_classes - 1]
+        class_index = max(0, min(true_a - 1, self.num_classes - 1))
+        class_tensor = torch.tensor(class_index, dtype=torch.long)
         
-        # Create n tensor for product loss
+        # Create n tensor
         n_tensor = torch.tensor(float(n), dtype=torch.float32)
         
-        return input_tensor, target_tensor, n_tensor
+        return input_tensor, class_tensor, n_tensor
 
 
 if __name__ == "__main__":

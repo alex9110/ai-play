@@ -12,7 +12,8 @@ export interface PredictResponse {
   n: number;
   factorA: number;
   factorB: number;
-  raw: number[];
+  logits: number[];
+  probabilities: number[];
 }
 
 export interface TrainRequest {
@@ -71,6 +72,8 @@ export interface TrainingStatus {
   total_epochs: number;
   train_loss: number;
   val_loss: number;
+  train_accuracy?: number;
+  val_accuracy?: number;
   error?: string;
 }
 

@@ -4,6 +4,7 @@ Configuration management for the factorization ML service.
 from pathlib import Path
 from typing import Optional
 import os
+import math
 
 # Base paths - handle both running from project root and backend directory
 if Path(__file__).parent.name == "backend":
@@ -49,6 +50,18 @@ class DatasetConfig:
     DEFAULT_MIN_VAL = 1000
     DEFAULT_MAX_VAL = 9999
     DEFAULT_DATASET_PATH = DATASET_DIR / "dataset.json"
+    
+    @staticmethod
+    def get_max_factor(max_val: int = None) -> int:
+        """Calculate maximum factor class index."""
+        if max_val is None:
+            max_val = DatasetConfig.DEFAULT_MAX_VAL
+        return int(math.sqrt(max_val))
+    
+    @staticmethod
+    def get_num_classes(max_val: int = None) -> int:
+        """Calculate number of classification classes."""
+        return DatasetConfig.get_max_factor(max_val)
 
 # Training configuration
 class TrainingConfig:

@@ -34,7 +34,8 @@ class PredictResponse(BaseModel):
     n: int
     factorA: int
     factorB: int
-    raw: list[float]
+    logits: list[float]
+    probabilities: list[float]
 
 
 @router.post("", response_model=PredictResponse)
@@ -50,13 +51,14 @@ async def predict_factors(request: PredictRequest):
                 detail="Model not found. Please train a model first."
             )
         
-        factor_a, factor_b, raw = predict(model, request.n, _device)
+        factor_a, factor_b, logits, probabilities = predict(model, request.n, _device)
         
         return PredictResponse(
             n=request.n,
             factorA=factor_a,
             factorB=factor_b,
-            raw=raw
+            logits=logits,
+            probabilities=probabilities
         )
     except HTTPException:
         raise

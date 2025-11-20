@@ -78,16 +78,43 @@ export const ResultCard: React.FC<ResultCardProps> = ({ result, loading, error }
         </div>
 
         <div className="pt-4 border-t border-gray-200">
-          <p className="text-sm text-gray-600 mb-2">Raw Model Output</p>
-          <div className="flex gap-4 text-sm font-mono">
+          <p className="text-sm text-gray-600 mb-2">Model Output</p>
+          <div className="space-y-2 text-sm">
             <div>
-              <span className="text-gray-500">Factor A:</span>
-              <span className="ml-2 text-gray-800">{result.raw[0].toFixed(2)}</span>
+              <span className="text-gray-500">Predicted Class Index:</span>
+              <span className="ml-2 text-gray-800 font-mono">{result.factorA - 1}</span>
             </div>
             <div>
-              <span className="text-gray-500">Factor B:</span>
-              <span className="ml-2 text-gray-800">{result.raw[1].toFixed(2)}</span>
+              <span className="text-gray-500">Top Class Probability:</span>
+              <span className="ml-2 text-gray-800 font-mono">
+                {result.probabilities && result.probabilities.length > 0
+                  ? (Math.max(...result.probabilities) * 100).toFixed(2) + '%'
+                  : 'N/A'}
+              </span>
             </div>
+            {result.probabilities && result.probabilities.length > 0 && (
+              <div className="mt-2">
+                <p className="text-xs text-gray-500 mb-1">Top 5 Class Probabilities:</p>
+                <div className="space-y-1">
+                  {result.probabilities
+                    .map((prob, idx) => ({ prob, idx }))
+                    .sort((a, b) => b.prob - a.prob)
+                    .slice(0, 5)
+                    .map(({ prob, idx }) => (
+                      <div key={idx} className="flex items-center gap-2">
+                        <span className="text-gray-600 font-mono text-xs">Class {idx}:</span>
+                        <div className="flex-1 bg-gray-200 rounded-full h-1.5 max-w-[100px]">
+                          <div
+                            className="bg-blue-500 h-1.5 rounded-full"
+                            style={{ width: `${prob * 100}%` }}
+                          />
+                        </div>
+                        <span className="text-gray-700 font-mono text-xs">{(prob * 100).toFixed(1)}%</span>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>

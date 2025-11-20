@@ -30,8 +30,7 @@ class Trainer:
         learning_rate: float = ModelConfig.DEFAULT_LEARNING_RATE,
         checkpoint_dir: Path = TrainingConfig.CHECKPOINT_DIR,
         log_dir: Path = TrainingConfig.LOG_DIR,
-        progress_callback: Optional[Callable[[Dict], None]] = None,
-        alpha: float = 0.05
+        progress_callback: Optional[Callable[[Dict], None]] = None
     ):
         """
         Args:
@@ -43,7 +42,6 @@ class Trainer:
             checkpoint_dir: Directory to save checkpoints
             log_dir: Directory to save logs
             progress_callback: Optional callback function for progress updates
-            alpha: Weight for product consistency loss (default: 0.05)
         """
         self.model = model.to(device)
         self.train_loader = train_loader
@@ -53,20 +51,17 @@ class Trainer:
         self.checkpoint_dir = Path(checkpoint_dir)
         self.log_dir = Path(log_dir)
         self.progress_callback = progress_callback
-        self.alpha = alpha
         
-        # Loss functions
-        self.criterion = nn.MSELoss()  # For factor loss
+        # Loss function: CrossEntropyLoss for classification
+        self.criterion = nn.CrossEntropyLoss()
         self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
         
         # Training history
         self.history = {
-            'train_loss_factors': [],
-            'train_loss_product': [],
-            'train_loss_total': [],
-            'val_loss_factors': [],
-            'val_loss_product': [],
-            'val_loss_total': [],
+            'train_loss': [],
+            'val_loss': [],
+            'train_accuracy': [],
+            'val_accuracy': [],
             'epochs': []
         }
         
@@ -83,65 +78,44 @@ class Trainer:
         Train for one epoch.
         
         Returns:
-            Dictionary with loss_factors, loss_product, loss_total
+            Dictionary with loss and accuracy
         """
         self.model.train()
-        total_loss_factors = 0.0
-        total_loss_product = 0.0
-        total_loss_total = 0.0
+        total_loss = 0.0
+        correct = 0
+        total = 0
         num_batches = 0
         
         for batch in self.train_loader:
-            # Handle both old format (inputs, targets) and new format (inputs, targets, n_values)
-            if len(batch) == 2:
-                inputs, targets = batch
-                n_values = None
-            else:
-                inputs, targets, n_values = batch
-                n_values = n_values.to(self.device)
+            inputs, class_indices, n_values = batch
             
             inputs = inputs.to(self.device)
-            targets = targets.to(self.device)
+            class_indices = class_indices.to(self.device)
             
             # Forward pass
             self.optimizer.zero_grad()
-            outputs = self.model(inputs)
+            logits = self.model(inputs)  # (batch_size, num_classes)
             
-            # Factor loss: MSE between predicted and true factors
-            loss_factors = self.criterion(outputs, targets)
-            
-            # Product loss: MSE between predicted product and actual n
-            if n_values is not None:
-                # Compute predicted product: a_pred * b_pred
-                product_pred = outputs[:, 0] * outputs[:, 1]
-                # Reshape n_values to match batch size if needed
-                if n_values.dim() == 0:
-                    n_values = n_values.unsqueeze(0).expand(outputs.size(0))
-                elif n_values.size(0) != outputs.size(0):
-                    n_values = n_values[:outputs.size(0)]
-                loss_product = self.criterion(product_pred, n_values)
-            else:
-                # Fallback: compute n from targets for backward compatibility
-                n_computed = targets[:, 0] * targets[:, 1]
-                product_pred = outputs[:, 0] * outputs[:, 1]
-                loss_product = self.criterion(product_pred, n_computed)
-            
-            # Composite loss
-            loss_total = loss_factors + self.alpha * loss_product
+            # Classification loss: CrossEntropy
+            loss = self.criterion(logits, class_indices)
             
             # Backward pass
-            loss_total.backward()
+            loss.backward()
             self.optimizer.step()
             
-            total_loss_factors += loss_factors.item()
-            total_loss_product += loss_product.item()
-            total_loss_total += loss_total.item()
+            # Calculate accuracy
+            predictions = logits.argmax(dim=1)
+            correct += (predictions == class_indices).sum().item()
+            total += class_indices.size(0)
+            
+            total_loss += loss.item()
             num_batches += 1
         
+        accuracy = (correct / total * 100.0) if total > 0 else 0.0
+        
         return {
-            'loss_factors': total_loss_factors / num_batches if num_batches > 0 else 0.0,
-            'loss_product': total_loss_product / num_batches if num_batches > 0 else 0.0,
-            'loss_total': total_loss_total / num_batches if num_batches > 0 else 0.0
+            'loss': total_loss / num_batches if num_batches > 0 else 0.0,
+            'accuracy': accuracy
         }
     
     def validate(self) -> Dict[str, float]:
@@ -149,60 +123,39 @@ class Trainer:
         Validate the model.
         
         Returns:
-            Dictionary with loss_factors, loss_product, loss_total
+            Dictionary with loss and accuracy
         """
         self.model.eval()
-        total_loss_factors = 0.0
-        total_loss_product = 0.0
-        total_loss_total = 0.0
+        total_loss = 0.0
+        correct = 0
+        total = 0
         num_batches = 0
         
         with torch.no_grad():
             for batch in self.val_loader:
-                # Handle both old format (inputs, targets) and new format (inputs, targets, n_values)
-                if len(batch) == 2:
-                    inputs, targets = batch
-                    n_values = None
-                else:
-                    inputs, targets, n_values = batch
-                    n_values = n_values.to(self.device)
+                inputs, class_indices, n_values = batch
                 
                 inputs = inputs.to(self.device)
-                targets = targets.to(self.device)
+                class_indices = class_indices.to(self.device)
                 
-                outputs = self.model(inputs)
+                logits = self.model(inputs)  # (batch_size, num_classes)
                 
-                # Factor loss: MSE between predicted and true factors
-                loss_factors = self.criterion(outputs, targets)
+                # Classification loss: CrossEntropy
+                loss = self.criterion(logits, class_indices)
                 
-                # Product loss: MSE between predicted product and actual n
-                if n_values is not None:
-                    # Compute predicted product: a_pred * b_pred
-                    product_pred = outputs[:, 0] * outputs[:, 1]
-                    # Reshape n_values to match batch size if needed
-                    if n_values.dim() == 0:
-                        n_values = n_values.unsqueeze(0).expand(outputs.size(0))
-                    elif n_values.size(0) != outputs.size(0):
-                        n_values = n_values[:outputs.size(0)]
-                    loss_product = self.criterion(product_pred, n_values)
-                else:
-                    # Fallback: compute n from targets for backward compatibility
-                    n_computed = targets[:, 0] * targets[:, 1]
-                    product_pred = outputs[:, 0] * outputs[:, 1]
-                    loss_product = self.criterion(product_pred, n_computed)
+                # Calculate accuracy
+                predictions = logits.argmax(dim=1)
+                correct += (predictions == class_indices).sum().item()
+                total += class_indices.size(0)
                 
-                # Composite loss
-                loss_total = loss_factors + self.alpha * loss_product
-                
-                total_loss_factors += loss_factors.item()
-                total_loss_product += loss_product.item()
-                total_loss_total += loss_total.item()
+                total_loss += loss.item()
                 num_batches += 1
         
+        accuracy = (correct / total * 100.0) if total > 0 else 0.0
+        
         return {
-            'loss_factors': total_loss_factors / num_batches if num_batches > 0 else 0.0,
-            'loss_product': total_loss_product / num_batches if num_batches > 0 else 0.0,
-            'loss_total': total_loss_total / num_batches if num_batches > 0 else 0.0
+            'loss': total_loss / num_batches if num_batches > 0 else 0.0,
+            'accuracy': accuracy
         }
     
     def save_checkpoint(self, epoch: int, is_best: bool = False):
@@ -211,11 +164,10 @@ class Trainer:
             'epoch': epoch,
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
-            'train_loss': self.history['train_loss_total'][-1] if self.history['train_loss_total'] else None,
-            'val_loss': self.history['val_loss_total'][-1] if self.history['val_loss_total'] else None,
+            'train_loss': self.history['train_loss'][-1] if self.history['train_loss'] else None,
+            'val_loss': self.history['val_loss'][-1] if self.history['val_loss'] else None,
             'best_val_loss': self.best_val_loss,
-            'version': self.current_version,
-            'alpha': self.alpha
+            'version': self.current_version
         }
         
         # Save epoch checkpoint
@@ -252,20 +204,18 @@ class Trainer:
         with open(csv_path, 'a', newline='') as f:
             writer = csv.DictWriter(f, fieldnames=[
                 'timestamp', 'epoch', 
-                'train_loss_factors', 'train_loss_product', 'train_loss_total',
-                'val_loss_factors', 'val_loss_product', 'val_loss_total'
+                'train_loss', 'train_accuracy',
+                'val_loss', 'val_accuracy'
             ])
             if not file_exists:
                 writer.writeheader()
             writer.writerow({
                 'timestamp': timestamp,
                 'epoch': epoch,
-                'train_loss_factors': self.history['train_loss_factors'][-1] if self.history['train_loss_factors'] else None,
-                'train_loss_product': self.history['train_loss_product'][-1] if self.history['train_loss_product'] else None,
-                'train_loss_total': self.history['train_loss_total'][-1] if self.history['train_loss_total'] else None,
-                'val_loss_factors': self.history['val_loss_factors'][-1] if self.history['val_loss_factors'] else None,
-                'val_loss_product': self.history['val_loss_product'][-1] if self.history['val_loss_product'] else None,
-                'val_loss_total': self.history['val_loss_total'][-1] if self.history['val_loss_total'] else None
+                'train_loss': self.history['train_loss'][-1] if self.history['train_loss'] else None,
+                'train_accuracy': self.history['train_accuracy'][-1] if self.history['train_accuracy'] else None,
+                'val_loss': self.history['val_loss'][-1] if self.history['val_loss'] else None,
+                'val_accuracy': self.history['val_accuracy'][-1] if self.history['val_accuracy'] else None
             })
         
         # JSON log (full history)
@@ -288,25 +238,23 @@ class Trainer:
         
         plt.figure(figsize=(14, 8))
         
-        # Plot total losses
+        # Plot losses
         plt.subplot(2, 1, 1)
-        plt.plot(self.history['epochs'], self.history['train_loss_total'], label='Train Total Loss', marker='o')
-        plt.plot(self.history['epochs'], self.history['val_loss_total'], label='Val Total Loss', marker='s')
+        plt.plot(self.history['epochs'], self.history['train_loss'], label='Train Loss', marker='o')
+        plt.plot(self.history['epochs'], self.history['val_loss'], label='Val Loss', marker='s')
         plt.xlabel('Epoch')
-        plt.ylabel('Total Loss')
-        plt.title('Training and Validation Total Loss')
+        plt.ylabel('CrossEntropy Loss')
+        plt.title('Training and Validation Loss')
         plt.legend()
         plt.grid(True)
         
-        # Plot component losses
+        # Plot accuracy
         plt.subplot(2, 1, 2)
-        plt.plot(self.history['epochs'], self.history['train_loss_factors'], label='Train Factors Loss', marker='o', linestyle='--')
-        plt.plot(self.history['epochs'], self.history['train_loss_product'], label='Train Product Loss', marker='o', linestyle=':')
-        plt.plot(self.history['epochs'], self.history['val_loss_factors'], label='Val Factors Loss', marker='s', linestyle='--')
-        plt.plot(self.history['epochs'], self.history['val_loss_product'], label='Val Product Loss', marker='s', linestyle=':')
+        plt.plot(self.history['epochs'], self.history['train_accuracy'], label='Train Accuracy', marker='o', linestyle='--')
+        plt.plot(self.history['epochs'], self.history['val_accuracy'], label='Val Accuracy', marker='s', linestyle='--')
         plt.xlabel('Epoch')
-        plt.ylabel('Component Loss')
-        plt.title('Training and Validation Component Losses')
+        plt.ylabel('Accuracy (%)')
+        plt.title('Training and Validation Accuracy')
         plt.legend()
         plt.grid(True)
         
@@ -347,17 +295,15 @@ class Trainer:
             
             # Update history
             self.history['epochs'].append(epoch + 1)
-            self.history['train_loss_factors'].append(train_metrics['loss_factors'])
-            self.history['train_loss_product'].append(train_metrics['loss_product'])
-            self.history['train_loss_total'].append(train_metrics['loss_total'])
-            self.history['val_loss_factors'].append(val_metrics['loss_factors'])
-            self.history['val_loss_product'].append(val_metrics['loss_product'])
-            self.history['val_loss_total'].append(val_metrics['loss_total'])
+            self.history['train_loss'].append(train_metrics['loss'])
+            self.history['train_accuracy'].append(train_metrics['accuracy'])
+            self.history['val_loss'].append(val_metrics['loss'])
+            self.history['val_accuracy'].append(val_metrics['accuracy'])
             
-            # Check if best model (using total validation loss)
-            is_best = val_metrics['loss_total'] < self.best_val_loss
+            # Check if best model (using validation loss)
+            is_best = val_metrics['loss'] < self.best_val_loss
             if is_best:
-                self.best_val_loss = val_metrics['loss_total']
+                self.best_val_loss = val_metrics['loss']
             
             # Save checkpoint
             if TrainingConfig.SAVE_EVERY_EPOCH:
@@ -374,37 +320,28 @@ class Trainer:
             if self.progress_callback:
                 self.progress_callback({
                     'epoch': epoch + 1,
-                    'train_loss': train_metrics['loss_total'],  # For backward compatibility
-                    'val_loss': val_metrics['loss_total'],  # For backward compatibility
-                    'train_loss_factors': train_metrics['loss_factors'],
-                    'train_loss_product': train_metrics['loss_product'],
-                    'train_loss_total': train_metrics['loss_total'],
-                    'val_loss_factors': val_metrics['loss_factors'],
-                    'val_loss_product': val_metrics['loss_product'],
-                    'val_loss_total': val_metrics['loss_total'],
+                    'train_loss': train_metrics['loss'],
+                    'val_loss': val_metrics['loss'],
+                    'train_accuracy': train_metrics['accuracy'],
+                    'val_accuracy': val_metrics['accuracy'],
                     'is_best': is_best
                 })
             
             print(f"Epoch {epoch + 1}/{start_epoch + num_epochs} - "
-                  f"Train: factors={train_metrics['loss_factors']:.4f}, "
-                  f"product={train_metrics['loss_product']:.4f}, "
-                  f"total={train_metrics['loss_total']:.4f} | "
-                  f"Val: factors={val_metrics['loss_factors']:.4f}, "
-                  f"product={val_metrics['loss_product']:.4f}, "
-                  f"total={val_metrics['loss_total']:.4f}")
+                  f"Train: loss={train_metrics['loss']:.4f}, "
+                  f"acc={train_metrics['accuracy']:.2f}% | "
+                  f"Val: loss={val_metrics['loss']:.4f}, "
+                  f"acc={val_metrics['accuracy']:.2f}%")
         
         # Final metrics
         metrics = {
-            'final_train_loss': self.history['train_loss_total'][-1] if self.history['train_loss_total'] else None,
-            'final_val_loss': self.history['val_loss_total'][-1] if self.history['val_loss_total'] else None,
-            'final_train_loss_factors': self.history['train_loss_factors'][-1] if self.history['train_loss_factors'] else None,
-            'final_train_loss_product': self.history['train_loss_product'][-1] if self.history['train_loss_product'] else None,
-            'final_val_loss_factors': self.history['val_loss_factors'][-1] if self.history['val_loss_factors'] else None,
-            'final_val_loss_product': self.history['val_loss_product'][-1] if self.history['val_loss_product'] else None,
+            'final_train_loss': self.history['train_loss'][-1] if self.history['train_loss'] else None,
+            'final_val_loss': self.history['val_loss'][-1] if self.history['val_loss'] else None,
+            'final_train_accuracy': self.history['train_accuracy'][-1] if self.history['train_accuracy'] else None,
+            'final_val_accuracy': self.history['val_accuracy'][-1] if self.history['val_accuracy'] else None,
             'best_val_loss': self.best_val_loss,
             'total_epochs': len(self.history['epochs']),
-            'model_version': self.current_version,
-            'alpha': self.alpha
+            'model_version': self.current_version
         }
         
         return metrics

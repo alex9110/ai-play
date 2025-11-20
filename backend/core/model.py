@@ -11,10 +11,11 @@ from config import ModelConfig
 class FactorizationMLP(nn.Module):
     """
     Multi-Layer Perceptron for predicting factors of an integer.
+    Classification version: predicts factorA as a class index.
     Uses embeddings instead of one-hot encoding for better generalization.
     
     Input: Sequence of digits (dynamic size support)
-    Output: Two floats representing the predicted factors
+    Output: Logits of shape (batch_size, num_classes) for factorA classification
     """
     
     def __init__(
@@ -23,7 +24,8 @@ class FactorizationMLP(nn.Module):
         embedding_dim: int = ModelConfig.EMBEDDING_DIM,
         hidden_dims: List[int] = None,
         dropout: float = ModelConfig.DROPOUT,
-        max_digits: int = ModelConfig.MAX_DIGITS
+        max_digits: int = ModelConfig.MAX_DIGITS,
+        num_classes: int = None
     ):
         """
         Args:
@@ -32,15 +34,21 @@ class FactorizationMLP(nn.Module):
             hidden_dims: List of hidden layer dimensions
             dropout: Dropout probability
             max_digits: Maximum number of digits to support
+            num_classes: Number of classification classes (default: sqrt(max_val))
         """
         super(FactorizationMLP, self).__init__()
         
         if hidden_dims is None:
             hidden_dims = ModelConfig.HIDDEN_DIMS
         
+        if num_classes is None:
+            from config import DatasetConfig
+            num_classes = DatasetConfig.get_num_classes()
+        
         self.vocab_size = vocab_size
         self.embedding_dim = embedding_dim
         self.max_digits = max_digits
+        self.num_classes = num_classes
         
         # Embedding layer for digits
         self.embedding = nn.Embedding(vocab_size, embedding_dim)
@@ -58,8 +66,8 @@ class FactorizationMLP(nn.Module):
             layers.append(nn.Dropout(dropout))
             prev_dim = hidden_dim
         
-        # Output layer: 2 factors
-        layers.append(nn.Linear(prev_dim, 2))
+        # Output layer: classification head (num_classes logits)
+        layers.append(nn.Linear(prev_dim, num_classes))
         
         self.network = nn.Sequential(*layers)
     
@@ -71,7 +79,7 @@ class FactorizationMLP(nn.Module):
             x: Input tensor of shape (batch_size, max_digits) with digit indices
             
         Returns:
-            Tensor of shape (batch_size, 2) with predicted factors
+            Tensor of shape (batch_size, num_classes) with classification logits
         """
         # x shape: (batch_size, max_digits)
         # Embed digits
@@ -82,9 +90,9 @@ class FactorizationMLP(nn.Module):
         flattened = embedded.view(batch_size, -1)  # (batch_size, max_digits * embedding_dim)
         
         # Pass through MLP
-        output = self.network(flattened)  # (batch_size, 2)
+        logits = self.network(flattened)  # (batch_size, num_classes)
         
-        return output
+        return logits
 
 
 def encode_number(n: int, max_digits: int = ModelConfig.MAX_DIGITS) -> torch.Tensor:
@@ -103,18 +111,26 @@ def encode_number(n: int, max_digits: int = ModelConfig.MAX_DIGITS) -> torch.Ten
     return torch.tensor(digits, dtype=torch.long)
 
 
-def decode_factors(prediction: torch.Tensor) -> Tuple[int, int]:
+def decode_factors(logits: torch.Tensor, n: int) -> Tuple[int, int]:
     """
-    Decode model prediction to integer factors.
+    Decode model prediction (classification logits) to integer factors.
     
     Args:
-        prediction: Tensor of shape (2,) with predicted factor values
+        logits: Tensor of shape (num_classes,) with classification logits
+        n: Original number to factorize
         
     Returns:
         Tuple of (factor_a, factor_b) as integers
     """
-    factor_a = max(1, int(round(prediction[0].item())))
-    factor_b = max(1, int(round(prediction[1].item())))
+    # Get predicted class index (argmax)
+    class_index = logits.argmax().item()
+    
+    # Convert to factorA: factorA = class_index + 1
+    factor_a = class_index + 1
+    
+    # Compute factorB: factorB = n // factorA
+    factor_b = n // factor_a if factor_a > 0 else 1
+    
     return factor_a, factor_b
 
 
@@ -163,4 +179,17 @@ def get_latest_model_path() -> str:
     
     latest = max(existing_versions, key=lambda x: x[0])
     return str(latest[1])
+
+
+def get_class_probabilities(logits: torch.Tensor) -> torch.Tensor:
+    """
+    Convert logits to class probabilities using softmax.
+    
+    Args:
+        logits: Tensor of shape (num_classes,) or (batch_size, num_classes)
+        
+    Returns:
+        Tensor of same shape with probabilities
+    """
+    return F.softmax(logits, dim=-1)
 

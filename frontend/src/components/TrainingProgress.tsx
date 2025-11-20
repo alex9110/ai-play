@@ -29,12 +29,8 @@ interface TrainingMetrics {
   epoch: number;
   train_loss: number;
   val_loss: number;
-  train_loss_factors?: number;
-  train_loss_product?: number;
-  train_loss_total?: number;
-  val_loss_factors?: number;
-  val_loss_product?: number;
-  val_loss_total?: number;
+  train_accuracy?: number;
+  val_accuracy?: number;
   is_best?: boolean;
 }
 
@@ -118,7 +114,7 @@ export const TrainingProgress: React.FC<TrainingProgressProps> = ({
             if (existing) {
               return prev.map((m) =>
                 m.epoch === data.epoch
-                  ? { ...data, train_loss: data.train_loss, val_loss: data.val_loss }
+                  ? { ...data, train_loss: data.train_loss, val_loss: data.val_loss, train_accuracy: data.train_accuracy, val_accuracy: data.val_accuracy }
                   : m
               );
             }
@@ -160,38 +156,42 @@ export const TrainingProgress: React.FC<TrainingProgressProps> = ({
     labels: metrics.map((m) => `Epoch ${m.epoch}`),
     datasets: [
       {
-        label: 'Train Total Loss',
-        data: metrics.map((m) => m.train_loss_total ?? m.train_loss),
+        label: 'Train Loss',
+        data: metrics.map((m) => m.train_loss),
         borderColor: 'rgb(59, 130, 246)',
         backgroundColor: 'rgba(59, 130, 246, 0.1)',
         fill: true,
-        tension: 0.4
+        tension: 0.4,
+        yAxisID: 'y'
       },
       {
-        label: 'Val Total Loss',
-        data: metrics.map((m) => m.val_loss_total ?? m.val_loss),
+        label: 'Val Loss',
+        data: metrics.map((m) => m.val_loss),
         borderColor: 'rgb(16, 185, 129)',
         backgroundColor: 'rgba(16, 185, 129, 0.1)',
         fill: true,
-        tension: 0.4
+        tension: 0.4,
+        yAxisID: 'y'
       },
       {
-        label: 'Train Factors Loss',
-        data: metrics.map((m) => m.train_loss_factors ?? m.train_loss),
+        label: 'Train Accuracy (%)',
+        data: metrics.map((m) => m.train_accuracy ?? 0),
         borderColor: 'rgb(139, 92, 246)',
         backgroundColor: 'rgba(139, 92, 246, 0.1)',
         fill: false,
         tension: 0.4,
-        borderDash: [5, 5]
+        borderDash: [5, 5],
+        yAxisID: 'y1'
       },
       {
-        label: 'Train Product Loss',
-        data: metrics.map((m) => m.train_loss_product ?? 0),
+        label: 'Val Accuracy (%)',
+        data: metrics.map((m) => m.val_accuracy ?? 0),
         borderColor: 'rgb(236, 72, 153)',
         backgroundColor: 'rgba(236, 72, 153, 0.1)',
         fill: false,
         tension: 0.4,
-        borderDash: [5, 5]
+        borderDash: [5, 5],
+        yAxisID: 'y1'
       }
     ]
   };
@@ -210,7 +210,26 @@ export const TrainingProgress: React.FC<TrainingProgressProps> = ({
     },
     scales: {
       y: {
-        beginAtZero: false
+        type: 'linear' as const,
+        position: 'left' as const,
+        beginAtZero: false,
+        title: {
+          display: true,
+          text: 'Loss'
+        }
+      },
+      y1: {
+        type: 'linear' as const,
+        position: 'right' as const,
+        beginAtZero: true,
+        max: 100,
+        title: {
+          display: true,
+          text: 'Accuracy (%)'
+        },
+        grid: {
+          drawOnChartArea: false
+        }
       }
     }
   };
@@ -316,48 +335,36 @@ export const TrainingProgress: React.FC<TrainingProgressProps> = ({
         <div className="space-y-3 mb-4">
           <div className="grid grid-cols-2 gap-4">
             <div className="bg-blue-50 p-3 rounded">
-              <p className="text-xs text-gray-600">Train Total Loss</p>
+              <p className="text-xs text-gray-600">Train Loss</p>
               <p className="text-lg font-semibold text-blue-700">
-                {(latestMetrics.train_loss_total ?? latestMetrics.train_loss).toFixed(4)}
+                {latestMetrics.train_loss.toFixed(4)}
               </p>
               {latestMetrics.is_best && (
                 <p className="text-xs text-blue-600 mt-1">⭐ Best</p>
               )}
             </div>
             <div className="bg-green-50 p-3 rounded">
-              <p className="text-xs text-gray-600">Val Total Loss</p>
+              <p className="text-xs text-gray-600">Val Loss</p>
               <p className="text-lg font-semibold text-green-700">
-                {(latestMetrics.val_loss_total ?? latestMetrics.val_loss).toFixed(4)}
+                {latestMetrics.val_loss.toFixed(4)}
               </p>
               {latestMetrics.is_best && (
                 <p className="text-xs text-green-600 mt-1">⭐ Best</p>
               )}
             </div>
           </div>
-          {(latestMetrics.train_loss_factors !== undefined || latestMetrics.train_loss_product !== undefined) && (
-            <div className="grid grid-cols-4 gap-2">
-              <div className="bg-purple-50 p-2 rounded">
-                <p className="text-xs text-gray-600">Train Factors</p>
-                <p className="text-sm font-semibold text-purple-700">
-                  {(latestMetrics.train_loss_factors ?? 0).toFixed(4)}
+          {(latestMetrics.train_accuracy !== undefined || latestMetrics.val_accuracy !== undefined) && (
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-purple-50 p-3 rounded">
+                <p className="text-xs text-gray-600">Train Accuracy</p>
+                <p className="text-lg font-semibold text-purple-700">
+                  {(latestMetrics.train_accuracy ?? 0).toFixed(2)}%
                 </p>
               </div>
-              <div className="bg-pink-50 p-2 rounded">
-                <p className="text-xs text-gray-600">Train Product</p>
-                <p className="text-sm font-semibold text-pink-700">
-                  {(latestMetrics.train_loss_product ?? 0).toFixed(4)}
-                </p>
-              </div>
-              <div className="bg-purple-50 p-2 rounded">
-                <p className="text-xs text-gray-600">Val Factors</p>
-                <p className="text-sm font-semibold text-purple-700">
-                  {(latestMetrics.val_loss_factors ?? 0).toFixed(4)}
-                </p>
-              </div>
-              <div className="bg-pink-50 p-2 rounded">
-                <p className="text-xs text-gray-600">Val Product</p>
-                <p className="text-sm font-semibold text-pink-700">
-                  {(latestMetrics.val_loss_product ?? 0).toFixed(4)}
+              <div className="bg-pink-50 p-3 rounded">
+                <p className="text-xs text-gray-600">Val Accuracy</p>
+                <p className="text-lg font-semibold text-pink-700">
+                  {(latestMetrics.val_accuracy ?? 0).toFixed(2)}%
                 </p>
               </div>
             </div>

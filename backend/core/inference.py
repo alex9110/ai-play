@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Tuple, List, Optional, Dict
 from datetime import datetime
 
-from config import ModelConfig, MODELS_DIR
+from config import ModelConfig, MODELS_DIR, DatasetConfig
 from core.model import FactorizationMLP, encode_number, decode_factors, get_latest_model_path
 
 
@@ -30,12 +30,14 @@ def load_model(model_path: Optional[str] = None, device: torch.device = None) ->
             raise FileNotFoundError("No model found. Please train a model first.")
     
     # Create model instance
+    num_classes = DatasetConfig.get_num_classes()
     model = FactorizationMLP(
         vocab_size=ModelConfig.VOCAB_SIZE,
         embedding_dim=ModelConfig.EMBEDDING_DIM,
         hidden_dims=ModelConfig.HIDDEN_DIMS,
         dropout=ModelConfig.DROPOUT,
-        max_digits=ModelConfig.MAX_DIGITS
+        max_digits=ModelConfig.MAX_DIGITS,
+        num_classes=num_classes
     )
     
     # Load checkpoint
@@ -51,9 +53,9 @@ def predict(
     model: FactorizationMLP,
     n: int,
     device: torch.device = None
-) -> Tuple[int, int, List[float]]:
+) -> Tuple[int, int, List[float], List[float]]:
     """
-    Predict factors for a given integer.
+    Predict factors for a given integer using classification.
     
     Args:
         model: Trained model
@@ -61,7 +63,7 @@ def predict(
         device: Device to run inference on
         
     Returns:
-        Tuple of (factor_a, factor_b, raw_output)
+        Tuple of (factor_a, factor_b, logits, probabilities)
     """
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -71,13 +73,20 @@ def predict(
     
     # Predict
     with torch.no_grad():
-        output = model(input_tensor)
-        raw_output = output[0].cpu().tolist()  # Remove batch dimension
+        logits = model(input_tensor)  # (1, num_classes)
+        logits_1d = logits[0]  # Remove batch dimension
+        
+        # Get probabilities
+        from core.model import get_class_probabilities
+        probabilities = get_class_probabilities(logits_1d)
+        
+        logits_list = logits_1d.cpu().tolist()
+        probabilities_list = probabilities.cpu().tolist()
     
     # Decode factors
-    factor_a, factor_b = decode_factors(output[0])
+    factor_a, factor_b = decode_factors(logits_1d, n)
     
-    return factor_a, factor_b, raw_output
+    return factor_a, factor_b, logits_list, probabilities_list
 
 
 def get_model_info(model_path: Optional[str] = None) -> Dict:
@@ -110,7 +119,8 @@ def get_model_info(model_path: Optional[str] = None) -> Dict:
         checkpoint = torch.load(model_path, map_location='cpu')
         
         # Calculate model size
-        model = FactorizationMLP()
+        num_classes = DatasetConfig.get_num_classes()
+        model = FactorizationMLP(num_classes=num_classes)
         model.load_state_dict(checkpoint['model_state_dict'])
         total_params = sum(p.numel() for p in model.parameters())
         trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -176,7 +186,8 @@ def get_model_weights_stats(model_path: Optional[str] = None) -> Dict:
         checkpoint = torch.load(model_path, map_location='cpu')
         
         # Create model and load weights
-        model = FactorizationMLP()
+        num_classes = DatasetConfig.get_num_classes()
+        model = FactorizationMLP(num_classes=num_classes)
         model.load_state_dict(checkpoint['model_state_dict'])
         
         # Collect statistics for each layer

@@ -9,7 +9,7 @@ import {
   Tooltip,
   Legend
 } from 'chart.js';
-import { getModelWeightsStats } from '../api';
+import { getModelWeightsStats, deleteModel } from '../api';
 import { LoaderSpinner } from './LoaderSpinner';
 
 // Register Chart.js components
@@ -49,14 +49,17 @@ interface ModelWeightsStats {
 
 interface ModelVisualizationProps {
   modelInfo?: any;
+  onDeleteSuccess?: () => void;
 }
 
 export const ModelVisualization: React.FC<ModelVisualizationProps> = ({
-  modelInfo
+  modelInfo,
+  onDeleteSuccess
 }) => {
   const [stats, setStats] = useState<ModelWeightsStats | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>('');
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     if (modelInfo?.exists) {
@@ -74,6 +77,28 @@ export const ModelVisualization: React.FC<ModelVisualizationProps> = ({
       setError(err instanceof Error ? err.message : 'Failed to load model weights stats');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDeleteModel = async () => {
+    if (!window.confirm('Are you sure you want to delete this model? This action cannot be undone.')) {
+      return;
+    }
+
+    setDeleting(true);
+    setError('');
+    try {
+      await deleteModel();
+      // Call success callback if provided
+      if (onDeleteSuccess) {
+        onDeleteSuccess();
+      } else {
+        // Fallback: reload page if no callback provided
+        window.location.reload();
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete model');
+      setDeleting(false);
     }
   };
 
@@ -109,19 +134,53 @@ export const ModelVisualization: React.FC<ModelVisualizationProps> = ({
           Model State Visualization
         </h3>
         <p className="text-sm text-red-600">{error}</p>
+        {stats && (stats.message || stats.error) && (
+          <p className="text-xs text-gray-600 mt-2">
+            {stats.message || stats.error}
+          </p>
+        )}
       </div>
     );
   }
 
   if (!stats || !stats.exists || !stats.layers) {
+    const isOldModel = stats?.is_old_model;
     return (
       <div className="bg-white rounded-lg shadow-lg p-6">
         <h3 className="text-xl font-semibold text-gray-800 mb-2">
           Model State Visualization
         </h3>
-        <p className="text-sm text-gray-600">
-          {stats?.message || 'Unable to load model statistics'}
-        </p>
+        <div className="space-y-2">
+          {isOldModel ? (
+            <div className="bg-yellow-50 border border-yellow-200 rounded p-3">
+              <p className="text-sm text-yellow-800 font-medium mb-1">
+                ⚠️ Incompatible Model Architecture
+              </p>
+              <p className="text-sm text-yellow-700">
+                {stats?.message || 'This model was trained with the old regression architecture and is incompatible with the new classification system.'}
+              </p>
+              <p className="text-xs text-yellow-600 mt-2 mb-3">
+                Solution: Please train a new model using the classification architecture.
+              </p>
+              <button
+                onClick={handleDeleteModel}
+                disabled={deleting}
+                className="px-4 py-2 bg-red-600 text-white text-sm font-medium rounded hover:bg-red-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+              >
+                {deleting ? 'Deleting...' : 'Delete This Model'}
+              </button>
+            </div>
+          ) : (
+            <p className="text-sm text-gray-600">
+              {stats?.message || stats?.error || 'Unable to load model statistics'}
+            </p>
+          )}
+          {stats?.error && !isOldModel && (
+            <p className="text-xs text-red-600 mt-2">
+              Technical details: {stats.error}
+            </p>
+          )}
+        </div>
       </div>
     );
   }

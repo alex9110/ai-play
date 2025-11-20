@@ -64,6 +64,7 @@ export interface ModelInfo {
   };
   message?: string;
   error?: string;
+  is_old_model?: boolean;
 }
 
 export interface TrainingStatus {
@@ -186,6 +187,7 @@ export interface ModelWeightsStats {
   trainable_parameters?: number;
   error?: string;
   message?: string;
+  is_old_model?: boolean;
 }
 
 export async function getModelWeightsStats(modelPath?: string): Promise<ModelWeightsStats> {
@@ -198,6 +200,31 @@ export async function getModelWeightsStats(modelPath?: string): Promise<ModelWei
   
   if (!response.ok) {
     throw new Error('Failed to get model weights stats');
+  }
+  
+  return response.json();
+}
+
+export interface DeleteModelResponse {
+  success: boolean;
+  message: string;
+  deleted_files?: string[];
+  error?: string;
+}
+
+export async function deleteModel(modelPath?: string): Promise<DeleteModelResponse> {
+  const url = new URL(`${API_BASE_URL}/model/delete`);
+  if (modelPath) {
+    url.searchParams.append('model_path', modelPath);
+  }
+  
+  const response = await fetch(url.toString(), {
+    method: 'DELETE',
+  });
+  
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to delete model');
   }
   
   return response.json();

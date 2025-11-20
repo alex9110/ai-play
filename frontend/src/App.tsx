@@ -11,6 +11,7 @@ import {
   getModelInfo,
   getDatasetInfo,
   getTrainingStatus,
+  deleteModel,
   PredictResponse,
   ModelInfo
 } from './api';
@@ -58,6 +59,23 @@ function App() {
       setModelInfo(info);
     } catch (err) {
       console.error('Failed to load model info:', err);
+    }
+  };
+
+  const handleDeleteModel = async () => {
+    if (!window.confirm('Are you sure you want to delete this model? This action cannot be undone.')) {
+      return;
+    }
+
+    try {
+      await deleteModel();
+      // Reload model info after deletion
+      await loadModelInfo();
+      // Also reload dataset info in case it's related
+      await loadDatasetInfo();
+    } catch (err) {
+      console.error('Failed to delete model:', err);
+      alert(err instanceof Error ? err.message : 'Failed to delete model');
     }
   };
 
@@ -185,11 +203,32 @@ function App() {
                   <h3 className="font-semibold text-blue-800 mb-2">Model</h3>
                   {modelInfo.exists ? (
                     <div className="text-sm text-gray-700 space-y-1">
+                      {modelInfo.is_old_model && (
+                        <div className="bg-yellow-50 border border-yellow-200 rounded p-2 mb-2">
+                          <p className="text-xs text-yellow-800 font-medium mb-1">
+                            ⚠️ Incompatible Model Architecture
+                          </p>
+                          <p className="text-xs text-yellow-700 mb-2">
+                            This model was trained with the old regression architecture. Please train a new model.
+                          </p>
+                          <button
+                            onClick={handleDeleteModel}
+                            className="px-3 py-1 bg-red-600 text-white text-xs font-medium rounded hover:bg-red-700 transition-colors"
+                          >
+                            Delete This Model
+                          </button>
+                        </div>
+                      )}
+                      {modelInfo.error && !modelInfo.is_old_model && (
+                        <div className="bg-red-50 border border-red-200 rounded p-2 mb-2">
+                          <p className="text-xs text-red-800">{modelInfo.error}</p>
+                        </div>
+                      )}
                       <p>Version: {modelInfo.version}</p>
                       <p>Epoch: {modelInfo.epoch}</p>
                       <p>Best Val Loss: {modelInfo.best_val_loss?.toFixed(4)}</p>
-                      <p>Parameters: {modelInfo.total_parameters?.toLocaleString()}</p>
-                      <p>Size: {modelInfo.file_size_mb} MB</p>
+                      {modelInfo.total_parameters && <p>Parameters: {modelInfo.total_parameters.toLocaleString()}</p>}
+                      {modelInfo.file_size_mb && <p>Size: {modelInfo.file_size_mb} MB</p>}
                     </div>
                   ) : (
                     <p className="text-sm text-gray-600">{modelInfo.message || 'No model found'}</p>
@@ -364,7 +403,10 @@ function App() {
           {/* Model Visualization Section */}
           {modelInfo?.exists && (
             <div className="mt-6">
-              <ModelVisualization modelInfo={modelInfo} />
+              <ModelVisualization 
+                modelInfo={modelInfo} 
+                onDeleteSuccess={loadModelInfo}
+              />
             </div>
           )}
 

@@ -146,3 +146,72 @@ def get_model_info(model_path: Optional[str] = None) -> Dict:
             'error': str(e)
         }
 
+
+def get_model_weights_stats(model_path: Optional[str] = None) -> Dict:
+    """
+    Get statistics about model weights for visualization.
+    
+    Args:
+        model_path: Path to model. If None, uses latest.
+        
+    Returns:
+        Dictionary with weight statistics for each layer
+    """
+    if model_path is None:
+        model_path = get_latest_model_path()
+        if model_path is None:
+            return {
+                'exists': False,
+                'message': 'No model found'
+            }
+    
+    path = Path(model_path)
+    if not path.exists():
+        return {
+            'exists': False,
+            'message': 'Model file not found'
+        }
+    
+    try:
+        checkpoint = torch.load(model_path, map_location='cpu')
+        
+        # Create model and load weights
+        model = FactorizationMLP()
+        model.load_state_dict(checkpoint['model_state_dict'])
+        
+        # Collect statistics for each layer
+        layers_stats = []
+        
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                weights = param.data.cpu().flatten()
+                
+                stats = {
+                    'name': name,
+                    'shape': list(param.shape),
+                    'num_params': param.numel(),
+                    'mean': float(weights.mean().item()),
+                    'std': float(weights.std().item()),
+                    'min': float(weights.min().item()),
+                    'max': float(weights.max().item()),
+                    'median': float(torch.median(weights).item()),
+                    'q25': float(torch.quantile(weights, 0.25).item()),
+                    'q75': float(torch.quantile(weights, 0.75).item())
+                }
+                layers_stats.append(stats)
+        
+        return {
+            'exists': True,
+            'model_path': str(path),
+            'version': checkpoint.get('version', 'unknown'),
+            'epoch': checkpoint.get('epoch', 'unknown'),
+            'layers': layers_stats,
+            'total_parameters': sum(p.numel() for p in model.parameters()),
+            'trainable_parameters': sum(p.numel() for p in model.parameters() if p.requires_grad)
+        }
+    except Exception as e:
+        return {
+            'exists': False,
+            'error': str(e)
+        }
+

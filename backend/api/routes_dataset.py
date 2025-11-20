@@ -47,6 +47,13 @@ async def generate_dataset_endpoint(request: GenerateDatasetRequest):
     """
     Generate a new dataset of numbers and their factors.
     """
+    # Validation: min_val must be <= max_val
+    if request.min_val > request.max_val:
+        raise HTTPException(
+            status_code=400,
+            detail="min_val must be less than or equal to max_val"
+        )
+    
     try:
         dataset = generate_dataset(
             num_samples=request.num_samples,

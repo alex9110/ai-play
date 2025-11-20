@@ -8,6 +8,7 @@ from typing import Optional, Dict
 import torch
 import json
 import asyncio
+import queue
 from pathlib import Path
 
 from core.model import FactorizationMLP, get_latest_model_path
@@ -52,27 +53,34 @@ def progress_callback(metrics: Dict):
         'val_loss': metrics['val_loss']
     })
     
-    # Send to SSE queue if available
-    if _training_state['progress_callback_queue']:
+    # Send to SSE queue if available (thread-safe queue.Queue)
+    progress_queue = _training_state.get('progress_callback_queue')
+    if progress_queue is not None:
         try:
-            _training_state['progress_callback_queue'].put_nowait(metrics)
-        except asyncio.QueueFull:
+            progress_queue.put_nowait(metrics)
+        except queue.Full:
+            # Queue is full, skip this update
+            pass
+        except AttributeError:
+            # Queue doesn't have put_nowait (shouldn't happen with queue.Queue)
             pass
 
 
-async def training_worker(
+def training_worker(
     epochs: int,
     batch_size: int,
     learning_rate: float,
     resume: bool,
     dataset_path: Optional[str]
 ):
-    """Background worker for training."""
+    """Background worker for training (synchronous function)."""
     global _training_state
     
     try:
+        print(f"[Training] Starting training worker: {epochs} epochs")
         _training_state['is_training'] = True
         _training_state['total_epochs'] = epochs
+        _training_state['current_epoch'] = 0
         
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
@@ -126,18 +134,23 @@ async def training_worker(
         )
         
         # Train
+        print(f"[Training] Beginning training loop...")
         metrics = trainer.train(
             num_epochs=epochs,
             resume_from=resume_from,
             start_epoch=start_epoch
         )
         
+        print(f"[Training] Training completed successfully")
         _training_state['is_training'] = False
         _training_state['current_epoch'] = epochs
         
     except Exception as e:
+        print(f"[Training] Error during training: {str(e)}")
         _training_state['is_training'] = False
         _training_state['error'] = str(e)
+        import traceback
+        traceback.print_exc()
         raise
 
 
@@ -155,11 +168,20 @@ async def start_training(request: TrainRequest, background_tasks: BackgroundTask
             detail="Training is already in progress"
         )
     
-    # Create SSE queue for progress updates
-    _training_state['progress_callback_queue'] = asyncio.Queue()
+    # Reset training state
+    _training_state['current_epoch'] = 0
+    _training_state['train_loss'] = 0.0
+    _training_state['val_loss'] = 0.0
+    _training_state['error'] = None
     
-    # Start training in background
-    background_tasks.add_task(
+    # Create SSE queue for progress updates (use thread-safe queue.Queue)
+    _training_state['progress_callback_queue'] = queue.Queue(maxsize=100)
+    
+    # Start training in background (use run_in_executor for sync function)
+    import concurrent.futures
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(
+        None,
         training_worker,
         request.epochs,
         request.batch_size,
@@ -182,34 +204,58 @@ async def get_training_progress():
     async def event_generator():
         global _training_state
         
+        # Send initial connection message
+        initial_data = {
+            'status': 'connected',
+            'is_training': _training_state['is_training'],
+            'current_epoch': _training_state['current_epoch'],
+            'total_epochs': _training_state['total_epochs']
+        }
+        yield f"data: {json.dumps(initial_data)}\n\n"
+        
+        # Ensure queue exists
+        if _training_state['progress_callback_queue'] is None:
+            _training_state['progress_callback_queue'] = queue.Queue(maxsize=100)
+        
+        progress_queue = _training_state['progress_callback_queue']
+        
         while _training_state['is_training']:
             try:
-                # Wait for progress update with timeout
-                metrics = await asyncio.wait_for(
-                    _training_state['progress_callback_queue'].get(),
-                    timeout=1.0
-                )
+                # Try to get progress update from queue
+                # Use executor to run blocking queue.get in thread pool
+                loop = asyncio.get_event_loop()
+                try:
+                    # Wait for item with timeout (runs in thread pool)
+                    metrics = await asyncio.wait_for(
+                        loop.run_in_executor(None, lambda: progress_queue.get(timeout=1.0)),
+                        timeout=2.0
+                    )
+                    
+                    data = {
+                        'epoch': metrics['epoch'],
+                        'train_loss': metrics['train_loss'],
+                        'val_loss': metrics['val_loss'],
+                        'is_best': metrics.get('is_best', False),
+                        'total_epochs': _training_state['total_epochs']
+                    }
+                    
+                    yield f"data: {json.dumps(data)}\n\n"
+                    
+                except (asyncio.TimeoutError, queue.Empty):
+                    # No update available, send heartbeat
+                    heartbeat_data = {
+                        'status': 'training',
+                        'current_epoch': _training_state['current_epoch'],
+                        'total_epochs': _training_state['total_epochs']
+                    }
+                    yield f"data: {json.dumps(heartbeat_data)}\n\n"
                 
-                data = {
-                    'epoch': metrics['epoch'],
-                    'train_loss': metrics['train_loss'],
-                    'val_loss': metrics['val_loss'],
-                    'is_best': metrics.get('is_best', False),
-                    'total_epochs': _training_state['total_epochs']
-                }
-                
-                yield f"data: {json.dumps(data)}\n\n"
-                
-            except asyncio.TimeoutError:
-                # Send heartbeat with current state
-                heartbeat_data = {
-                    'status': 'training',
-                    'current_epoch': _training_state['current_epoch'],
-                    'total_epochs': _training_state['total_epochs']
-                }
-                yield f"data: {json.dumps(heartbeat_data)}\n\n"
             except Exception as e:
-                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+                error_data = {
+                    'status': 'error',
+                    'error': str(e)
+                }
+                yield f"data: {json.dumps(error_data)}\n\n"
                 break
         
         # Send final status

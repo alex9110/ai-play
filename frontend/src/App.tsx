@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { NumberInput } from './components/NumberInput';
 import { ResultCard } from './components/ResultCard';
 import { TrainingProgress } from './components/TrainingProgress';
+import { ModelVisualization } from './components/ModelVisualization';
 import { LoaderSpinner } from './components/LoaderSpinner';
 import {
   predictFactors,
@@ -32,6 +33,8 @@ function App() {
   const [learningRate, setLearningRate] = useState(0.001);
   const [resume, setResume] = useState(false);
   const [numSamples, setNumSamples] = useState(10000);
+  const [minVal, setMinVal] = useState(1);
+  const [maxVal, setMaxVal] = useState(9999);
   const [generatingDataset, setGeneratingDataset] = useState(false);
 
   // Load initial data
@@ -69,12 +72,18 @@ function App() {
   const checkTrainingStatus = async () => {
     try {
       const status = await getTrainingStatus();
-      setIsTraining(status.is_training);
-      if (status.error) {
-        setTrainingError(status.error);
+      // Only update if we got a valid response
+      if (status) {
+        setIsTraining(status.is_training);
+        if (status.error) {
+          setTrainingError(status.error);
+          setIsTraining(false);
+        }
       }
     } catch (err) {
-      // Ignore errors when checking status
+      // If status check fails and we're in training state, keep it
+      // This handles cases where training just started
+      console.error('Failed to check training status:', err);
     }
   };
 
@@ -94,11 +103,21 @@ function App() {
   };
 
   const handleGenerateDataset = async () => {
+    // Validation
+    if (minVal > maxVal) {
+      setTrainingError('Min Value must be less than or equal to Max Value');
+      return;
+    }
+    
     setGeneratingDataset(true);
     setTrainingError('');
     
     try {
-      await generateDataset({ num_samples: numSamples });
+      await generateDataset({ 
+        num_samples: numSamples,
+        min_val: minVal,
+        max_val: maxVal
+      });
       await loadDatasetInfo();
       alert('Dataset generated successfully!');
     } catch (err) {
@@ -110,6 +129,7 @@ function App() {
 
   const handleStartTraining = async () => {
     setTrainingError('');
+    setIsTraining(true); // Set immediately for visual feedback
     
     try {
       await startTraining({
@@ -118,7 +138,7 @@ function App() {
         learning_rate: learningRate,
         resume
       });
-      setIsTraining(true);
+      // Training started successfully, status will be updated via polling
       await loadModelInfo();
     } catch (err) {
       setTrainingError(err instanceof Error ? err.message : 'Failed to start training');
@@ -211,9 +231,36 @@ function App() {
                       max="100000"
                     />
                   </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-sm text-gray-600 mb-1">Min Value</label>
+                      <input
+                        type="number"
+                        value={minVal}
+                        onChange={(e) => setMinVal(parseInt(e.target.value) || 1)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        min="1"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-gray-600 mb-1">Max Value</label>
+                      <input
+                        type="number"
+                        value={maxVal}
+                        onChange={(e) => setMaxVal(parseInt(e.target.value) || 9999)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        min="1"
+                      />
+                    </div>
+                  </div>
+                  {minVal > maxVal && (
+                    <div className="p-2 bg-red-50 border border-red-200 rounded text-red-600 text-sm">
+                      Min Value must be ≤ Max Value
+                    </div>
+                  )}
                   <button
                     onClick={handleGenerateDataset}
-                    disabled={generatingDataset}
+                    disabled={generatingDataset || minVal > maxVal}
                     className="w-full px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
                   >
                     {generatingDataset ? <LoaderSpinner size="sm" text="Generating..." /> : 'Generate Dataset'}
@@ -274,9 +321,16 @@ function App() {
                   <button
                     onClick={handleStartTraining}
                     disabled={isTraining}
-                    className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+                    className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
                   >
-                    {isTraining ? 'Training...' : 'Start Training'}
+                    {isTraining ? (
+                      <>
+                        <LoaderSpinner size="sm" />
+                        <span>Training in Progress...</span>
+                      </>
+                    ) : (
+                      'Start Training'
+                    )}
                   </button>
                 </div>
               </div>
@@ -288,8 +342,16 @@ function App() {
               </div>
             )}
 
+            {/* Show training progress section */}
             <TrainingProgress isTraining={isTraining} onTrainingComplete={handleTrainingComplete} />
           </div>
+
+          {/* Model Visualization Section */}
+          {modelInfo?.exists && (
+            <div className="mt-6">
+              <ModelVisualization modelInfo={modelInfo} />
+            </div>
+          )}
 
           <footer className="mt-8 text-center text-sm text-gray-500">
             <p>

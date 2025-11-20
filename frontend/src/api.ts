@@ -158,3 +158,43 @@ export async function checkHealth(): Promise<{ status: string }> {
   const response = await fetch(`${API_BASE_URL}/health`);
   return response.json();
 }
+
+export interface LayerStats {
+  name: string;
+  shape: number[];
+  num_params: number;
+  mean: number;
+  std: number;
+  min: number;
+  max: number;
+  median: number;
+  q25: number;
+  q75: number;
+}
+
+export interface ModelWeightsStats {
+  exists: boolean;
+  model_path?: string;
+  version?: string | number;
+  epoch?: string | number;
+  layers?: LayerStats[];
+  total_parameters?: number;
+  trainable_parameters?: number;
+  error?: string;
+  message?: string;
+}
+
+export async function getModelWeightsStats(modelPath?: string): Promise<ModelWeightsStats> {
+  const url = new URL(`${API_BASE_URL}/model/weights/stats`);
+  if (modelPath) {
+    url.searchParams.append('model_path', modelPath);
+  }
+  
+  const response = await fetch(url.toString());
+  
+  if (!response.ok) {
+    throw new Error('Failed to get model weights stats');
+  }
+  
+  return response.json();
+}
